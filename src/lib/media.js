@@ -2,6 +2,20 @@ import exifr from 'exifr';
 import { readVideoMeta } from './mp4meta';
 
 const MAX_PHOTO_SIDE = 2048;
+
+// exifr skips HEICs whose ftyp box is over 50 bytes, but iOS 18+ photos list extra brands
+// (e.g. `tmap` for the HDR gain map) and are bigger than that. Same check, looser limit.
+const heicParser = exifr.fileParsers?.get('heic');
+if (heicParser) {
+  heicParser.canHandle = function (file, firstTwoBytes) {
+    if (firstTwoBytes !== 0) return false;
+    const ftypLength = file.getUint16(2);
+    if (ftypLength > 256) return false;
+    const brands = [];
+    for (let o = 16; o < ftypLength; o += 4) brands.push(file.getString(o, 4));
+    return brands.includes(this.type);
+  };
+}
 let nextId = 1;
 
 // Large videos stay file-backed: copying them would eat into the iPhone tab memory limit.
@@ -66,16 +80,15 @@ function decodeWithImg(blob) {
 
 /**
  * Decode any supported image to a drawable source. Safari/iOS decodes HEIC natively in <img>;
- * other browsers fall back to heic2any (loaded on demand).
+ * other browsers fall back to heic-to (loaded on demand; its libheif handles iOS 18+ HEICs).
  */
 async function decodeImage(file, kind) {
   try {
     return await decodeWithImg(file);
   } catch (e) {
     if (kind !== 'heic') throw e;
-    const { default: heic2any } = await import('heic2any');
-    const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
-    return decodeWithImg(Array.isArray(out) ? out[0] : out);
+    const { heicTo } = await import('heic-to');
+    return decodeWithImg(await heicTo({ blob: file, type: 'image/jpeg', quality: 0.92 }));
   }
 }
 

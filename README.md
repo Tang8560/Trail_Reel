@@ -55,7 +55,7 @@ This serves the app over HTTPS on your local network. Open the `Network: https:/
 - iPhone memory: photos are stored as compact JPEGs and decoded only while on screen, so long hikes with many photos don't crash Safari. Videos over 300 MB are read from the file directly instead of being copied into memory.
 - The iOS photo picker may convert HEVC videos to H.264, and converted clips can lose their original capture time. Those clips fall back to the file date; use the clock offset, or the clip lands by capture order.
 - Recording happens in real time (a 2-minute video takes about 2 minutes). Keep the tab visible while it records.
-- HEIC is decoded natively on Safari; on other browsers `heic2any` is loaded on demand (slower).
+- HEIC is decoded natively on Safari; on other browsers `heic-to` is loaded on demand (slower).
 - iPhone `.mov` files are HEVC. Chrome/Edge on Windows play them only if HEVC hardware decoding is available. If a clip is rejected, export it as H.264 first.
 - Map tiles: OpenTopoMap, Esri World Imagery and OpenStreetMap. Credits are drawn on the video. Tiles are fetched once per render; please respect each provider's usage policy.
 

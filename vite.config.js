@@ -33,7 +33,7 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // heic2any chunk
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // heic-to chunk
         runtimeCaching: [
           {
             // Re-rendering the same hike (or working offline afterwards) reuses tiles.
@@ -57,5 +57,5 @@ export default defineConfig(({ mode }) => ({
     // blips (common during a long recording). Reload manually after code changes instead.
     hmr: mode === 'phone' ? false : undefined,
   },
-  build: { chunkSizeWarningLimit: 1500 }, // heic2any is lazy-loaded only when a HEIC needs decoding
+  build: { chunkSizeWarningLimit: 2300 }, // heic-to is lazy-loaded only when a HEIC needs decoding
 }));
