@@ -60,6 +60,9 @@ export async function startRecording(canvas, audioTrack, { fps = 30, videoBitsPe
     mimeType,
     ext,
     persisted: !!stored,
+    // Paused time is left out of the file, so loading/decoding stalls never show as freezes.
+    pause: () => rec.state === 'recording' && rec.pause(),
+    resume: () => rec.state === 'paused' && rec.resume(),
     stop: () =>
       new Promise((resolve) => {
         rec.onstop = async () => {

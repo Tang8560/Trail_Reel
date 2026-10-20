@@ -1,6 +1,6 @@
 import { pointAtDistance } from './gpx';
 import { fmtClock, fmtDate, fmtDuration, fmtKm, fmtMeters } from './format';
-import { getPhotoBitmap, releasePhotoBitmap, seekVideo } from './media';
+import { getPhotoBitmap, releasePhotoBitmap, seekVideo, waitForData } from './media';
 
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif';
 const FADE = 0.45;
@@ -753,10 +753,24 @@ export function drawSegment(ctx, scene, seg, t, now) {
 const nextFrame = () =>
   new Promise((r) => (document.hidden ? setTimeout(r, 1000 / 30) : requestAnimationFrame(() => r())));
 
-export async function runReel(canvas, scene, segments, { signal, onProgress, music, videoAudio }) {
+// A clip whose time hasn't moved for this long is stalled (decoder or file read falling behind).
+const STALL_MS = 150;
+// Give up on a clip that makes no progress at all for this long.
+const STUCK_MS = 10000;
+
+export async function runReel(canvas, scene, segments, { signal, onProgress, music, videoAudio, onHold }) {
   const ctx = canvas.getContext('2d');
   const total = segments.reduce((s, x) => s + x.duration, 0);
   let before = 0;
+  // While held, the caller pauses the recording and music, so waiting on slow media
+  // (seeking or decoding a big HEVC .mov, say) never shows up as a frozen picture.
+  let held = false;
+  const hold = (on) => {
+    if (on !== held) {
+      held = on;
+      onHold?.(on);
+    }
+  };
   await music?.start();
 
   const nextPhoto = (i) => segments.slice(i + 1).find((s) => s.type === 'photo');
@@ -769,7 +783,10 @@ export async function runReel(canvas, scene, segments, { signal, onProgress, mus
   preseek(segments[0]);
   for (const [i, seg] of segments.entries()) {
     if (signal?.aborted) break;
-    if (seg.type === 'photo') await getPhotoBitmap(seg.item).catch(() => {});
+    if (seg.type === 'photo' && !seg.item.bitmap) {
+      hold(true);
+      await getPhotoBitmap(seg.item).catch(() => {});
+    }
     // Decode the upcoming photo in the background so the cut is seamless.
     const upcoming = nextPhoto(i);
     if (upcoming) getPhotoBitmap(upcoming.item).catch(() => {});
@@ -779,40 +796,69 @@ export async function runReel(canvas, scene, segments, { signal, onProgress, mus
       video = seg.item.video;
       video.pause();
       video.muted = false;
+      hold(true); // released once the clip's frames are actually moving
       preseek(seg);
       await seeks.get(seg);
       seeks.delete(seg);
       await seekVideo(video, seg.start); // no-op when the pre-seek landed
+      await waitForData(video);
     }
     const after = segments[i + 1];
     if (after?.type === 'video' && after.item !== seg.item) preseek(after);
+    let lastCT = -1;
+    let lastMove = -Infinity;
+    const onWaiting = () => (lastMove = -Infinity);
+    // A newly presented frame also counts as progress (more precise than currentTime alone).
+    let frameCb = 0;
+    const watchFrames = () => {
+      frameCb = video.requestVideoFrameCallback?.(() => {
+        lastMove = performance.now();
+        watchFrames();
+      });
+    };
     if (video) {
       if (videoAudio) music?.duck(true);
+      video.addEventListener('waiting', onWaiting);
+      watchFrames();
       playing = await video.play().then(
         () => true,
         () => false
       );
+      lastCT = video.currentTime;
     }
     if (seg.type === 'outro') music?.fadeOut(seg.duration);
 
     const t0 = performance.now();
+    const holdStart = performance.now();
     for (;;) {
       if (signal?.aborted) break;
-      const wall = (performance.now() - t0) / 1000;
-      let t = wall;
+      const nowMs = performance.now();
+      let t = (nowMs - t0) / 1000;
+      let stalled = false;
       if (video && playing) {
+        if (video.currentTime !== lastCT) {
+          lastCT = video.currentTime;
+          lastMove = nowMs;
+        }
+        stalled = nowMs - lastMove > STALL_MS;
         t = video.currentTime - seg.start;
-        if (video.ended || t >= seg.duration || wall > seg.duration + 4) break;
+        if (video.ended || t >= seg.duration) break;
+        if (stalled && nowMs - Math.max(lastMove, holdStart) > STUCK_MS) break;
       } else if (t >= seg.duration) break;
       const tc = clamp(t, 0, seg.duration);
-      drawSegment(ctx, scene, seg, tc, performance.now() / 1000);
+      drawSegment(ctx, scene, seg, tc, nowMs / 1000);
       onProgress?.((before + tc) / total);
+      // Hold the recording during a stall; resume only after a fresh frame is on the canvas.
+      hold(stalled);
       await nextFrame();
     }
     if (video) {
+      video.removeEventListener('waiting', onWaiting);
+      if (frameCb) video.cancelVideoFrameCallback?.(frameCb);
       video.pause();
       if (videoAudio) music?.duck(false);
     }
+    hold(false);
     // Free decoded photos right away (iOS kills tabs that hold too much image memory).
     if (seg.type === 'photo' && upcoming?.item !== seg.item) releasePhotoBitmap(seg.item);
     before += seg.duration;

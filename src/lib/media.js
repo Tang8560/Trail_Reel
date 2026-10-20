@@ -175,6 +175,12 @@ function once(el, ok, timeoutMs = 15000) {
   });
 }
 
+/** Wait (up to timeoutMs) until the video has data buffered beyond the current frame. */
+export async function waitForData(video, timeoutMs = 3000) {
+  if (video.readyState >= 3) return;
+  await once(video, 'canplay', timeoutMs).catch(() => {});
+}
+
 export async function seekVideo(video, t) {
   if (Math.abs(video.currentTime - t) < 0.02 && video.readyState >= 2) return;
   const p = once(video, 'seeked', 5000).catch(() => {});
@@ -182,9 +188,25 @@ export async function seekVideo(video, t) {
   await p;
 }
 
+// Videos live in the page (invisible). Detached <video> elements can be decoded at a reduced
+// rate (notably Safari), which made clips stutter or freeze when drawn onto the canvas.
+let videoHost = null;
+function attachVideo(video) {
+  if (!videoHost) {
+    videoHost = document.createElement('div');
+    videoHost.setAttribute('aria-hidden', 'true');
+    videoHost.style.cssText =
+      'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
+    document.body.appendChild(videoHost);
+  }
+  video.style.cssText = 'width:2px;height:2px';
+  videoHost.appendChild(video);
+}
+
 async function loadVideo(file) {
   const url = URL.createObjectURL(file);
   const video = document.createElement('video');
+  attachVideo(video);
   video.preload = 'auto';
   video.playsInline = true;
   video.setAttribute('playsinline', '');
@@ -201,6 +223,7 @@ async function loadVideo(file) {
     }
   } catch (e) {
     URL.revokeObjectURL(url);
+    video.remove();
     throw e;
   }
   const meta = await readVideoMeta(file).catch(() => ({}));
@@ -240,5 +263,6 @@ export function disposeMedia(item) {
     item.video.pause();
     item.video.removeAttribute('src');
     item.video.load();
+    item.video.remove();
   }
 }

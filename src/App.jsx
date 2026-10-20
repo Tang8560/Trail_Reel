@@ -311,6 +311,16 @@ export default function App() {
         signal: ctrl.signal,
         music: musicCtl,
         videoAudio: settings.videoAudio,
+        // Freeze the output (recording + music) while a clip loads or stalls.
+        onHold: (on) => {
+          if (on) {
+            recorder?.pause();
+            musicCtl.pause();
+          } else {
+            musicCtl.resume();
+            recorder?.resume();
+          }
+        },
         onProgress: (p) => {
           const now = performance.now();
           if (now - last > 100 || p >= 1) {

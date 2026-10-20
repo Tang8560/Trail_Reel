@@ -81,6 +81,7 @@ export function createMusicController(musicEl, volume, { loop = true } = {}) {
   const { ac, musicBus } = audio;
   if (musicEl) gainFor(musicEl, musicBus);
   const g = musicBus.gain;
+  let held = false;
   return {
     async start() {
       g.cancelScheduledValues(ac.currentTime);
@@ -100,6 +101,14 @@ export function createMusicController(musicEl, volume, { loop = true } = {}) {
       g.setValueAtTime(g.value, ac.currentTime);
       g.linearRampToValueAtTime(0, ac.currentTime + sec);
     },
+    pause() {
+      held = !!musicEl && !musicEl.paused && !musicEl.ended;
+      musicEl?.pause();
+    },
+    resume() {
+      if (held) musicEl.play().catch(() => {});
+      held = false;
+    },
     stop() {
       musicEl?.pause();
     },
@@ -109,6 +118,7 @@ export function createMusicController(musicEl, volume, { loop = true } = {}) {
 /** Fallback without Web Audio: drive the element's own volume. */
 function simpleMusicController(musicEl, volume, loop) {
   let fade = null;
+  let held = false;
   const setVol = (v) => musicEl && (musicEl.volume = Math.max(0, Math.min(1, v)));
   return {
     async start() {
@@ -131,6 +141,14 @@ function simpleMusicController(musicEl, volume, loop) {
         setVol(from * (1 - p));
         if (p >= 1) clearInterval(fade);
       }, 50);
+    },
+    pause() {
+      held = !!musicEl && !musicEl.paused && !musicEl.ended;
+      musicEl?.pause();
+    },
+    resume() {
+      if (held) musicEl.play().catch(() => {});
+      held = false;
     },
     stop() {
       clearInterval(fade);
