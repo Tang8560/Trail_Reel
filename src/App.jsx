@@ -3,6 +3,7 @@ import { parseGpx } from './lib/gpx';
 import { disposeMedia, kindOf, loadMedia, readIntoMemory } from './lib/media';
 import { buildBasemap, MAP_STYLES } from './lib/map';
 import { buildTerrain } from './lib/terrain3d';
+import { renderCover } from './lib/cover';
 import { buildSegments, placeMedia, totalDuration } from './lib/timeline';
 import { buildStats, createScene, defaultSubtitle, drawSegment, runReel } from './lib/renderer';
 import { createMusicController, getRecordingAudioTrack, routeVideo, unlockMedia } from './lib/audio';
@@ -361,8 +362,49 @@ export default function App() {
     if (output) outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [output]);
 
+  // A cover image for the reel, designed from the hike each time a video is made.
+  const [cover, setCover] = useState(null);
+  useEffect(() => {
+    const drop = () =>
+      setCover((old) => {
+        if (old) URL.revokeObjectURL(old.url);
+        return null;
+      });
+    drop();
+    if (!output || (!track && !items.length)) return;
+    let cancelled = false;
+    renderCover({
+      W,
+      H,
+      track,
+      placed,
+      title: settings.title.trim() || track?.name || 'My Hike',
+      subtitle: defaultSubtitle(track, items),
+      stats: buildStats(track, items),
+      accent: settings.accent,
+    })
+      .then((blob) => {
+        if (cancelled || !blob) return;
+        const name = output.name.replace(/\.\w+$/, '') + '-cover.jpg';
+        setCover({ url: URL.createObjectURL(blob), name, file: new File([blob], name, { type: 'image/jpeg' }) });
+      })
+      .catch((e) => setErrors((errs) => [...errs, `Cover: ${e.message}`]));
+    return () => {
+      cancelled = true;
+    };
+    // Only for a new video: the cover matches what was recorded, not later edits.
+  }, [output]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // On iPhone the share sheet is the way to "Save Video" into Photos.
   const canShare = output && navigator.canShare?.({ files: [output.file] });
+  const canShareCover = cover && navigator.canShare?.({ files: [cover.file] });
+  const shareCover = async () => {
+    try {
+      await navigator.share({ files: [cover.file], title: cover.name });
+    } catch (e) {
+      if (e.name !== 'AbortError') setErrors([`Sharing failed: ${e.message}`]);
+    }
+  };
   const share = async () => {
     try {
       await navigator.share({ files: [output.file], title: output.name });
@@ -666,6 +708,27 @@ export default function App() {
                     Discard
                   </button>
                 </div>
+                {cover && (
+                  <div className="cover-row">
+                    <img src={cover.url} alt="Reel cover" className="cover-thumb" />
+                    <div className="cover-info">
+                      <strong>Reel cover</strong>
+                      <span className="muted">
+                        Made from your track and summit photo. When posting, tap Edit cover → Add from camera roll.
+                      </span>
+                      <div className="output-buttons">
+                        {canShareCover && (
+                          <button className="secondary" onClick={shareCover}>
+                            Save cover
+                          </button>
+                        )}
+                        <a className="secondary button" href={cover.url} download={cover.name}>
+                          Download cover
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
