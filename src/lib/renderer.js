@@ -1,6 +1,7 @@
 import { pointAtDistance } from './gpx';
 import { dayNumber, fmtClock, fmtDate, fmtDateRange, fmtDuration, fmtKm, fmtMeters } from './format';
 import { getPhotoBitmap, releasePhotoBitmap, seekVideo, waitForData } from './media';
+import { getTerrainView } from './terrain3d';
 
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif';
 const FADE = 0.45;
@@ -83,7 +84,7 @@ function simplifyPath(raw, tol) {
   return { pts, map };
 }
 
-export function createScene({ W, H, track, basemap, placed, settings, title, subtitle, stats }) {
+export function createScene({ W, H, track, basemap, terrain, placed, settings, title, subtitle, stats }) {
   const u = Math.min(W, H) / 1080;
   const scene = {
     W,
@@ -130,6 +131,18 @@ export function createScene({ W, H, track, basemap, placed, settings, title, sub
       const [x, y] = basemap.toScreen(pt.lat, pt.lon);
       return { x, y, dist: p.dist, img: makePin(p.item.thumbCanvas, settings.accent) };
     });
+    // How the route is placed on screen; the 3D view swaps in projected points.
+    scene.flat = { pts: scene.pts, at: basemap.toScreen, pin: (p) => [p.x, p.y] };
+    if (terrain && settings.route3d) {
+      const hs = scene.pts.map(([x, y]) => terrain.heightAt(x, y));
+      const base = hs.reduce((a, b) => Math.min(a, b), Infinity);
+      scene.view3d = getTerrainView(basemap, terrain, base);
+      if (scene.view3d) {
+        scene.ptsH = hs.map((h) => h - base);
+        for (const pin of scene.pins) pin.h = terrain.heightAt(pin.x, pin.y) - base;
+        scene.headingAt = buildHeading(track, basemap, settings.routeSeconds);
+      }
+    }
     // Elevation profile, sampled evenly along distance.
     const N = 300;
     scene.profile = Array.from({ length: N + 1 }, (_, i) =>
@@ -202,8 +215,12 @@ function buildStaticLayers(scene) {
 /* ───────────────────────── map layers ───────────────────────── */
 
 function drawMapBase(ctx, scene) {
+  ctx.drawImage(scene.basemap.canvas, 0, 0);
+  drawVignette(ctx, scene);
+}
+
+function drawVignette(ctx, scene) {
   const { W, H, basemap } = scene;
-  ctx.drawImage(basemap.canvas, 0, 0);
   const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.75);
   g.addColorStop(0, 'rgba(0,0,0,0)');
   g.addColorStop(1, 'rgba(0,0,0,0.45)');
@@ -227,8 +244,8 @@ function tracePath(ctx, pts, endIdx, end) {
 }
 
 /** The whole route as a white line with a dark edge. Static, so it lives in cached layers. */
-function strokeOutline(ctx, scene, k) {
-  const { pts, u } = scene;
+function strokeOutline(ctx, scene, k, pts = scene.pts) {
+  const { u } = scene;
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -246,15 +263,16 @@ function strokeOutline(ctx, scene, k) {
  * Traveled portion + start/finish dots + photo pins + position marker, drawn over a layer
  * that already has the route outline. k scales line widths.
  */
-function drawRouteLayer(ctx, scene, dist, now, { k = 1, pins = true, marker = true, routeAlpha = 1 } = {}) {
-  const { pts, track, basemap, u, accent } = scene;
+function drawRouteLayer(ctx, scene, dist, now, { k = 1, pins = true, marker = true, routeAlpha = 1, view = scene.flat } = {}) {
+  const { track, u, accent } = scene;
+  const { pts } = view;
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.globalAlpha *= routeAlpha;
 
   const pos = pointAtDistance(track.points, dist);
-  const end = basemap.toScreen(pos.lat, pos.lon);
+  const end = view.at(pos.lat, pos.lon);
   if (dist > 0) {
     tracePath(ctx, pts, scene.ptIdx[pos.idx], end);
     ctx.strokeStyle = accent;
@@ -281,17 +299,18 @@ function drawRouteLayer(ctx, scene, dist, now, { k = 1, pins = true, marker = tr
       if (pin.dist > dist) continue;
       const s = pins === 'all' ? 1 : easeOut(clamp((dist - pin.dist) / pop));
       if (s <= 0) continue;
+      const [px, py] = view.pin(pin);
       const r = 30 * u * k * s;
-      const cy = pin.y - r - 10 * u * k * s;
+      const cy = py - r - 10 * u * k * s;
       ctx.beginPath();
-      ctx.moveTo(pin.x, pin.y);
-      ctx.lineTo(pin.x - 9 * u * k * s, cy + r * 0.7);
-      ctx.lineTo(pin.x + 9 * u * k * s, cy + r * 0.7);
+      ctx.moveTo(px, py);
+      ctx.lineTo(px - 9 * u * k * s, cy + r * 0.7);
+      ctx.lineTo(px + 9 * u * k * s, cy + r * 0.7);
       ctx.closePath();
       ctx.fillStyle = '#fff';
       ctx.fill();
       const R = (r * pin.img.width) / PIN;
-      ctx.drawImage(pin.img, pin.x - R, cy - R, R * 2, R * 2);
+      ctx.drawImage(pin.img, px - R, cy - R, R * 2, R * 2);
     }
   }
 
@@ -522,10 +541,113 @@ function drawIntro(ctx, scene, seg, t, now) {
 
 function drawRouteSegment(ctx, scene, seg, t, now) {
   const dist = seg.from + (seg.to - seg.from) * easeInOut(clamp(t / seg.duration));
-  ctx.drawImage(scene.mapLayer, 0, 0);
-  drawRouteLayer(ctx, scene, dist, now);
+  if (scene.view3d) {
+    drawRoute3D(ctx, scene, seg, t, now, dist);
+  } else {
+    ctx.drawImage(scene.mapLayer, 0, 0);
+    drawRouteLayer(ctx, scene, dist, now);
+  }
   drawTitleBar(ctx, scene);
   drawBottomHud(ctx, scene, dist);
+}
+
+// Seconds the camera takes to tilt down from (and back up to) the flat overview.
+const FLY = 1.6;
+// Fastest the 3D camera may turn, in radians per second of video (~75°/s).
+const TURN_RATE = (75 * Math.PI) / 180;
+const lerp = (a, b, t) => a + (b - a) * t;
+
+/**
+ * Camera heading (radians, for the 3D view) as a smooth function of distance along the trail.
+ * Raw trail directions swing wildly on switchbacks and turnarounds, so they're unwrapped,
+ * blurred over a stretch of trail, and capped to a gentle turning speed for an animation
+ * of `routeSeconds`: every turn becomes a slow pan.
+ */
+function buildHeading(track, basemap, routeSeconds) {
+  const N = 720;
+  const total = track.totalDist;
+  const at = (d) => {
+    const p = pointAtDistance(track.points, clamp(d, 0, total));
+    return basemap.toScreen(p.lat, p.lon);
+  };
+  const raw = new Float64Array(N + 1);
+  let last = 0;
+  for (let i = 0; i <= N; i++) {
+    const d = (total * i) / N;
+    const [x0, y0] = at(d - total * 0.01);
+    const [x1, y1] = at(d + total * 0.01);
+    // Looking along (dx, dy) means a heading of atan2(-dx, -dy); keep the last one on a pause.
+    let a = Math.hypot(x1 - x0, y1 - y0) > 0.5 ? Math.atan2(x0 - x1, y0 - y1) : last;
+    // Unwrap, so a turn through ±180° doesn't jump by a full circle.
+    while (a - last > Math.PI) a -= 2 * Math.PI;
+    while (a - last < -Math.PI) a += 2 * Math.PI;
+    raw[i] = a;
+    last = a;
+  }
+  // Gaussian blur (three box passes), with the ends held.
+  let cur = raw;
+  const r = Math.round(N * 0.04);
+  for (let pass = 0; pass < 3; pass++) {
+    const out = new Float64Array(N + 1);
+    for (let i = 0; i <= N; i++) {
+      let s = 0;
+      for (let k = -r; k <= r; k++) s += cur[clamp(i + k, 0, N)];
+      out[i] = s / (2 * r + 1);
+    }
+    cur = out;
+  }
+  // Cap the turning speed. Route segments ease in and out, peaking at 3× their average speed.
+  const maxStep = (TURN_RATE * routeSeconds) / N / 3;
+  const fwd = Float64Array.from(cur);
+  const back = Float64Array.from(cur);
+  for (let i = 1; i <= N; i++) fwd[i] = clamp(fwd[i], fwd[i - 1] - maxStep, fwd[i - 1] + maxStep);
+  for (let i = N - 1; i >= 0; i--) back[i] = clamp(back[i], back[i + 1] - maxStep, back[i + 1] + maxStep);
+  // Averaging a forward and a backward pass keeps turns centred on the bend instead of lagging.
+  cur = fwd.map((a, i) => (a + back[i]) / 2);
+  return (d) => {
+    const f = clamp(d / total, 0, 1) * N;
+    const i = Math.min(N - 1, Math.floor(f));
+    return lerp(cur[i], cur[i + 1], f - i);
+  };
+}
+
+function drawRoute3D(ctx, scene, seg, t, now, dist) {
+  const { track, basemap, view3d: v } = scene;
+  const total = track.totalDist;
+  // The trip's first route stretch starts top-down, exactly like the 2D intro map, and the
+  // last one ends that way so the outro matches too. In between the camera follows the hiker.
+  const b = easeInOut(
+    Math.min(seg.from <= 0 ? clamp(t / FLY) : 1, seg.to >= total ? clamp((seg.duration - t) / FLY) : 1)
+  );
+  // Ride behind the hiker, looking along the trail. Follow a short stretch of trail around the
+  // marker rather than the marker itself, so GPS jitter doesn't shake the camera.
+  let ax = 0;
+  let ay = 0;
+  for (let i = -2; i <= 2; i++) {
+    const p = pointAtDistance(track.points, clamp(dist + i * total * 0.004, 0, total));
+    const [x, y] = basemap.toScreen(p.lat, p.lon);
+    ax += x / 5;
+    ay += y / 5;
+  }
+  let heading = scene.headingAt(dist);
+  // While tilting in/out the camera turns from north-up, so take the short way round.
+  if (b < 1) heading = Math.atan2(Math.sin(heading), Math.cos(heading));
+  v.setCamera({ b, x: ax, y: ay, heading });
+
+  ctx.drawImage(v.render(), 0, 0);
+  drawVignette(ctx, scene);
+
+  const view = {
+    pts: scene.pts.map(([x, y], i) => v.project(x, y, scene.ptsH[i])),
+    at: (lat, lon) => {
+      const [x, y] = basemap.toScreen(lat, lon);
+      return v.project(x, y, v.heightAt(x, y));
+    },
+    pin: (p) => v.project(p.x, p.y, p.h),
+  };
+  const k = 1 + 0.3 * b;
+  strokeOutline(ctx, scene, k, view.pts);
+  drawRouteLayer(ctx, scene, dist, now, { k, view });
 }
 
 function drawOutro(ctx, scene, seg, t, now) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseGpx } from './lib/gpx';
 import { disposeMedia, kindOf, loadMedia, readIntoMemory } from './lib/media';
 import { buildBasemap, MAP_STYLES } from './lib/map';
+import { buildTerrain } from './lib/terrain3d';
 import { buildSegments, placeMedia, totalDuration } from './lib/timeline';
 import { buildStats, createScene, defaultSubtitle, drawSegment, runReel } from './lib/renderer';
 import { createMusicController, getRecordingAudioTrack, routeVideo, unlockMedia } from './lib/audio';
@@ -33,6 +34,7 @@ const DEFAULTS = {
   videoVolume: 1,
   musicVolume: 0.6,
   insetMap: true,
+  route3d: true,
   accent: '#ff6b35',
   bitrate: IS_TOUCH ? 8 : 12,
 };
@@ -64,6 +66,7 @@ export default function App() {
   const canvasRef = useRef(null);
   const abortRef = useRef(null);
   const basemapRef = useRef({ key: null, promise: null });
+  const terrainRef = useRef({ basemap: null, promise: null });
   const gpxInput = useRef(null);
   const mediaInput = useRef(null);
   const musicInput = useRef(null);
@@ -156,12 +159,19 @@ export default function App() {
   const prepare = useCallback(async () => {
     let basemap = null;
     if (track) {
-      const key = `${gpxName}|${track.totalDist}|${W}x${H}|${settings.mapStyle}`;
+      // The 3D camera needs map around the frame to follow the trail without showing an edge.
+      const pad = settings.route3d ? Math.round(Math.min(W, H) / 2) : 0;
+      const key = `${gpxName}|${track.totalDist}|${W}x${H}|${settings.mapStyle}|${pad}`;
       // Share one in-flight build between the poster frame and Preview/Generate.
       if (basemapRef.current.key !== key) {
         setBusy({ label: 'Loading map tiles…', done: 0, total: 1 });
-        const promise = buildBasemap(track, W, H, settings.mapStyle, (p) =>
-          setBusy({ label: 'Loading map tiles…', done: p, total: 1 })
+        const promise = buildBasemap(
+          track,
+          W,
+          H,
+          settings.mapStyle,
+          (p) => setBusy({ label: 'Loading map tiles…', done: p, total: 1 }),
+          pad
         )
           .then(
             (bm) => {
@@ -179,11 +189,30 @@ export default function App() {
       }
       basemap = await basemapRef.current.promise;
     }
+    let terrain = null;
+    if (basemap && settings.route3d) {
+      // Elevation for the 3D route view, fetched once per basemap. Without it the map stays flat.
+      if (terrainRef.current.basemap !== basemap) {
+        setBusy({ label: 'Loading terrain…', done: 0, total: 1 });
+        const promise = buildTerrain(basemap, (p) => setBusy({ label: 'Loading terrain…', done: p, total: 1 }))
+          .then(
+            (tr) => {
+              if (tr.failed) setErrors((e) => [...e, `${tr.failed} of ${tr.total} terrain tiles failed to load; mountains may look flat.`]);
+              return tr;
+            },
+            () => null
+          )
+          .finally(() => setBusy(null));
+        terrainRef.current = { basemap, promise };
+      }
+      terrain = await terrainRef.current.promise;
+    }
     return createScene({
       W,
       H,
       track,
       basemap,
+      terrain,
       placed,
       settings,
       title: settings.title.trim() || track?.name || 'My Hike',
@@ -546,6 +575,9 @@ export default function App() {
                   <input type="checkbox" checked={settings.insetMap} onChange={set('insetMap')} /> Mini-map
                 </label>
               </div>
+              <label className="check">
+                <input type="checkbox" checked={settings.route3d} onChange={set('route3d')} /> 3D terrain route animation
+              </label>
               {activeMusicEl && (
                 <Range label="Music volume" unit="" min={0} max={1} step={0.05} value={settings.musicVolume} onChange={set('musicVolume')} />
               )}

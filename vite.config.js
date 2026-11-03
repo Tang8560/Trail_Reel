@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const TILE_HOSTS = /^https:\/\/([abc]\.tile\.opentopomap\.org|tile\.openstreetmap\.org|server\.arcgisonline\.com)\//;
+const TILE_HOSTS = /^https:\/\/([abc]\.tile\.opentopomap\.org|tile\.openstreetmap\.org|server\.arcgisonline\.com|s3\.amazonaws\.com\/elevation-tiles-prod)\//;
 
 export default defineConfig(({ mode }) => ({
   plugins: [

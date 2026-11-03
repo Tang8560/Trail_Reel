@@ -36,13 +36,13 @@ export function project(lat, lon, z) {
   ];
 }
 
-async function loadTile(url) {
+export async function loadTile(url) {
   const r = await fetch(url, { mode: 'cors' });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return createImageBitmap(await r.blob());
 }
 
-async function pool(jobs, limit, fn) {
+export async function pool(jobs, limit, fn) {
   let i = 0;
   const workers = Array.from({ length: Math.min(limit, jobs.length) }, async () => {
     while (i < jobs.length) await fn(jobs[i++]);
@@ -53,8 +53,10 @@ async function pool(jobs, limit, fn) {
 /**
  * Render a static basemap sized to the output video that frames the whole track.
  * Tiles are fetched (not <img>) so a CORS failure can never taint the recording canvas.
+ * With `pad`, a wider map extending `pad` px past every edge is also kept (as `wide`), for
+ * the 3D camera to look around in.
  */
-export async function buildBasemap(track, W, H, styleKey, onProgress) {
+export async function buildBasemap(track, W, H, styleKey, onProgress, pad = 0) {
   const style = MAP_STYLES[styleKey] || MAP_STYLES.satellite;
   const b = track.bounds;
   // Leave room for the title (top) and the elevation profile (bottom).
@@ -74,20 +76,20 @@ export async function buildBasemap(track, W, H, styleKey, onProgress) {
   const ox = ((x1 + x2) / 2) * scale - W / 2;
   const oy = ((y1 + y2) / 2) * scale - H * 0.46;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d');
+  const full = document.createElement('canvas');
+  full.width = W + pad * 2;
+  full.height = H + pad * 2;
+  const ctx = full.getContext('2d');
   ctx.fillStyle = style.bg;
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(0, 0, full.width, full.height);
 
   let failed = 0;
   let total = 0;
   if (style.url) {
     const n = 2 ** z;
     const jobs = [];
-    for (let tx = Math.floor(ox / tile); tx <= Math.floor((ox + W) / tile); tx++) {
-      for (let ty = Math.floor(oy / tile); ty <= Math.floor((oy + H) / tile); ty++) {
+    for (let tx = Math.floor((ox - pad) / tile); tx <= Math.floor((ox + W + pad) / tile); tx++) {
+      for (let ty = Math.floor((oy - pad) / tile); ty <= Math.floor((oy + H + pad) / tile); ty++) {
         if (ty < 0 || ty >= n) continue;
         jobs.push({ tx, ty, wx: ((tx % n) + n) % n });
       }
@@ -98,7 +100,7 @@ export async function buildBasemap(track, W, H, styleKey, onProgress) {
       try {
         const img = await loadTile(style.url(z, j.wx, j.ty, j.tx + j.ty));
         // +0.5px overlap hides hairline seams between scaled tiles
-        ctx.drawImage(img, j.tx * tile - ox, j.ty * tile - oy, tile + 0.5, tile + 0.5);
+        ctx.drawImage(img, j.tx * tile - ox + pad, j.ty * tile - oy + pad, tile + 0.5, tile + 0.5);
         img.close();
       } catch {
         failed++;
@@ -107,9 +109,20 @@ export async function buildBasemap(track, W, H, styleKey, onProgress) {
     });
   }
 
+  let canvas = full;
+  if (pad) {
+    canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    canvas.getContext('2d').drawImage(full, -pad, -pad);
+  }
+
   return {
     canvas,
+    wide: pad ? { canvas: full, pad } : null,
     zoom: z,
+    // Basemap pixel p ↔ zoom-z world pixel (p + o) / scale; used to line up terrain tiles.
+    world: { z, scale, ox, oy },
     attribution: failed < total ? style.attribution : '',
     failed,
     total,
