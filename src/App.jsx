@@ -8,7 +8,6 @@ import { createMusicController, getRecordingAudioTrack, routeVideo, unlockMedia 
 import { pickMimeType, startRecording } from './lib/recorder';
 import { clearRecordings, latestRecording, loadRecordingBlob } from './lib/recordingStore';
 import { fmtBytes, fmtDateTime, fmtDuration, fmtKm } from './lib/format';
-import { composeMusic, MUSIC_STYLES } from './lib/musicgen';
 
 const RESOLUTIONS = {
   '1080x1920': 'Vertical 1080×1920 (Reels / Shorts)',
@@ -23,7 +22,7 @@ const DEFAULTS = {
   title: '',
   resolution: IS_TOUCH ? '1080x1920' : '1920x1080',
   fps: 30,
-  mapStyle: 'topo',
+  mapStyle: 'satellite',
   photoSeconds: 3.5,
   maxClip: 8,
   clipStart: 0,
@@ -51,20 +50,8 @@ export default function App() {
   const [gpxName, setGpxName] = useState('');
   const [items, setItems] = useState([]);
   const [music, setMusic] = useState(null); // the user's own song
-  // Background music: 'generated' (composed on the device), 'file' (user's song) or 'none'.
-  const [musicMode, setMusicMode] = useState('generated');
-  const [musicStyle, setMusicStyle] = useState('sunnyTrail');
-  const [musicSeed, setMusicSeed] = useState(() => Math.floor(Math.random() * 1e9));
-  const [genMusic, setGenMusic] = useState(null); // { key, url }
-  const [genBusy, setGenBusy] = useState(false);
-  // One persistent element for generated music, so iOS's tap-to-unlock carries over when
-  // the tune is re-composed (only its src changes).
-  const [genEl] = useState(() => {
-    const el = new Audio();
-    el.preload = 'auto';
-    return el;
-  });
-  const genJob = useRef(null);
+  // Background music: 'file' (user's song) or 'none'.
+  const [musicMode, setMusicMode] = useState('file');
   const [settings, setSettings] = useState(DEFAULTS);
   const [busy, setBusy] = useState(null);
   const [status, setStatus] = useState('idle');
@@ -91,43 +78,7 @@ export default function App() {
   const segments = useMemo(() => buildSegments(placed, track, settings), [placed, track, settings]);
   const estSeconds = totalDuration(segments);
 
-  // Generated music is composed for the video's length (+2 s so it never runs short).
-  const musicSeconds = Math.ceil(estSeconds + 2);
-  const musicKey = `${musicStyle}|${musicSeed}|${musicSeconds}`;
-  const ensureMusic = useCallback(
-    (key, style, seed, seconds) => {
-      if (genJob.current?.key === key) return genJob.current.promise;
-      setGenBusy(true);
-      const promise = composeMusic({ style, seed, seconds })
-        .then(({ blob }) => {
-          if (genJob.current?.key !== key) return; // superseded by a newer request
-          const url = URL.createObjectURL(blob);
-          genEl.src = url;
-          setGenMusic((old) => {
-            if (old) URL.revokeObjectURL(old.url);
-            return { key, url };
-          });
-        })
-        .catch((e) => {
-          setErrors((errs) => [...errs, `Music: ${e.message}`]);
-          genJob.current = null;
-        })
-        .finally(() => {
-          if (genJob.current?.key === key || !genJob.current) setGenBusy(false);
-        });
-      genJob.current = { key, promise };
-      return promise;
-    },
-    [genEl]
-  );
-  const hasContent = !!track || items.length > 0;
-  useEffect(() => {
-    if (musicMode !== 'generated' || !hasContent) return;
-    const id = setTimeout(() => ensureMusic(musicKey, musicStyle, musicSeed, musicSeconds), 600);
-    return () => clearTimeout(id);
-  }, [musicMode, hasContent, musicKey, musicStyle, musicSeed, musicSeconds, ensureMusic]);
-  const musicReady = musicMode !== 'generated' || (genMusic?.key === musicKey && !genBusy);
-  const activeMusicEl = musicMode === 'file' ? music?.el : musicMode === 'generated' && genMusic ? genEl : null;
+  const activeMusicEl = musicMode === 'file' ? music?.el : null;
 
   /* ───────────── file intake ───────────── */
 
@@ -283,9 +234,7 @@ export default function App() {
     await unlocked;
     const scene = await prepare();
     for (const it of items) if (it.video) routeVideo(it.video, settings.videoAudio ? settings.videoVolume : 0);
-    const musicCtl = createMusicController(activeMusicEl, activeMusicEl ? settings.musicVolume : 0, {
-      loop: musicMode === 'file', // generated music is already composed to the right length
-    });
+    const musicCtl = createMusicController(activeMusicEl, activeMusicEl ? settings.musicVolume : 0, { loop: true });
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -396,7 +345,7 @@ export default function App() {
 
   const running = status !== 'idle';
   const mime = useMemo(pickMimeType, []);
-  const ready = (track || items.length) && !busy && musicReady;
+  const ready = (track || items.length) && !busy;
   const photos = items.filter((i) => i.kind === 'photo').length;
   const videos = items.length - photos;
   const durationLabel = `${Math.floor(estSeconds / 60)}:${String(Math.round(estSeconds % 60)).padStart(2, '0')}`;
@@ -452,6 +401,41 @@ export default function App() {
                   <small>{items.length ? `${photos} photos · ${videos} videos` : 'HEIC, JPG, MOV, MP4'}</small>
                 </span>
               </button>
+              <div className="add-row">
+                <button className={`add ${activeMusicEl ? 'done' : ''}`} onClick={pick(musicInput)} disabled={running}>
+                  <span className="add-icon">♪</span>
+                  <span className="add-text">
+                    <strong>{music ? music.name : 'Add music'}</strong>
+                    <small>
+                      {!music ? 'Optional · MP3, M4A' : musicMode === 'file' ? 'Background song · tap to replace' : 'Not used · video has no music'}
+                    </small>
+                  </span>
+                </button>
+                {music && (
+                  <button className="icon" title="Remove song" onClick={removeMusic} disabled={running}>
+                    ✕
+                  </button>
+                )}
+              </div>
+              {music && (
+                <div className="segmented" role="radiogroup" aria-label="Background music">
+                  {[
+                    ['file', '♪ My song'],
+                    ['none', 'No music'],
+                  ].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      role="radio"
+                      aria-checked={musicMode === mode}
+                      className={musicMode === mode ? 'on' : ''}
+                      onClick={() => setMusicMode(mode)}
+                      disabled={running}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <p className="drop-hint">…or drop files anywhere in this box</p>
           </section>
@@ -493,82 +477,6 @@ export default function App() {
               </div>
             </section>
           )}
-
-          <section className="s-music card music">
-            <h2>Music</h2>
-            <div className="segmented" role="radiogroup" aria-label="Background music">
-              {[
-                ['generated', '✨ Generated'],
-                ['file', '♪ My song'],
-                ['none', 'No music'],
-              ].map(([mode, label]) => (
-                <button
-                  key={mode}
-                  role="radio"
-                  aria-checked={musicMode === mode}
-                  className={musicMode === mode ? 'on' : ''}
-                  onClick={() => setMusicMode(mode)}
-                  disabled={running}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {musicMode === 'generated' && (
-              <>
-                <div className="style-grid">
-                  {Object.entries(MUSIC_STYLES).map(([k, st]) => (
-                    <button
-                      key={k}
-                      className={`style-chip ${musicStyle === k ? 'on' : ''}`}
-                      aria-pressed={musicStyle === k}
-                      onClick={() => setMusicStyle(k)}
-                      disabled={running}
-                    >
-                      <span className="chip-icon">{st.icon}</span>
-                      <span className="chip-text">
-                        <strong>{st.label}</strong>
-                        <small>{st.desc}</small>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="gen-row">
-                  <button onClick={() => setMusicSeed(Math.floor(Math.random() * 1e9))} disabled={running || genBusy}>
-                    🎲 New tune
-                  </button>
-                  {genBusy ? (
-                    <span className="composing">
-                      <span className="spinner small" /> Composing…
-                    </span>
-                  ) : genMusic ? (
-                    <audio className="music-preview" controls preload="none" src={genMusic.url} />
-                  ) : (
-                    <span className="muted">{hasContent ? '' : 'Add your hike first — the tune is made to fit the video.'}</span>
-                  )}
-                </div>
-                <small className="muted">Composed on your device to fit this video · royalty-free</small>
-              </>
-            )}
-
-            {musicMode === 'file' &&
-              (music ? (
-                <div className="source-row">
-                  <span className="tag music">SONG</span>
-                  <div className="source-info grow">
-                    <strong>{music.name}</strong>
-                  </div>
-                  <button className="icon" title="Remove song" onClick={removeMusic} disabled={running}>
-                    ✕
-                  </button>
-                </div>
-              ) : (
-                <button className="choose-song" onClick={pick(musicInput)} disabled={running}>
-                  Choose a song (MP3, M4A)…
-                </button>
-              ))}
-          </section>
 
           <details className="s-settings card settings" open={!IS_TOUCH}>
             <summary>
@@ -623,7 +531,7 @@ export default function App() {
                   <input type="checkbox" checked={settings.insetMap} onChange={set('insetMap')} /> Mini-map
                 </label>
               </div>
-              {musicMode !== 'none' && (
+              {activeMusicEl && (
                 <Range label="Music volume" unit="" min={0} max={1} step={0.05} value={settings.musicVolume} onChange={set('musicVolume')} />
               )}
               <div className="row2">
@@ -679,7 +587,7 @@ export default function App() {
                   ● Create video
                 </button>
                 <span className="muted est">
-                  {genBusy && musicMode === 'generated' ? '♪ Composing music… · ' : ''}≈ {durationLabel} · {segments.length} scenes · {mime ? mime.split(';')[0].replace('video/', '').toUpperCase() : 'recording unsupported'}
+                  ≈ {durationLabel} · {segments.length} scenes · {mime ? mime.split(';')[0].replace('video/', '').toUpperCase() : 'recording unsupported'}
                 </span>
               </>
             )}

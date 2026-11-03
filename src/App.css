@@ -214,6 +214,18 @@ button.add.done .add-icon {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.add-row button.add {
+  flex: 1;
+  min-width: 0;
+}
+.add-buttons .segmented {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .drop-hint {
   margin: 4px 0 0;
   color: var(--muted);
@@ -722,7 +734,6 @@ input {
   .s-preview { order: 4; }
   .s-output { order: 5; }
   .s-story { order: 6; }
-  .s-music { order: 7; }
   .s-sources { order: 8; }
   .s-settings { order: 9; }
   .segmented button {

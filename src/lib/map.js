@@ -1,13 +1,6 @@
 const TILE = 256;
 
 export const MAP_STYLES = {
-  topo: {
-    label: 'Topographic',
-    url: (z, x, y, i) => `https://${'abc'[i % 3]}.tile.opentopomap.org/${z}/${x}/${y}.png`,
-    maxZoom: 16,
-    attribution: '© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)',
-    bg: '#dfe6d8',
-  },
   satellite: {
     label: 'Satellite',
     url: (z, x, y) =>
@@ -15,6 +8,13 @@ export const MAP_STYLES = {
     maxZoom: 17,
     attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
     bg: '#1b2416',
+  },
+  topo: {
+    label: 'Topographic',
+    url: (z, x, y, i) => `https://${'abc'[i % 3]}.tile.opentopomap.org/${z}/${x}/${y}.png`,
+    maxZoom: 16,
+    attribution: '© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)',
+    bg: '#dfe6d8',
   },
   streets: {
     label: 'Streets (OSM)',
@@ -55,7 +55,7 @@ async function pool(jobs, limit, fn) {
  * Tiles are fetched (not <img>) so a CORS failure can never taint the recording canvas.
  */
 export async function buildBasemap(track, W, H, styleKey, onProgress) {
-  const style = MAP_STYLES[styleKey] || MAP_STYLES.topo;
+  const style = MAP_STYLES[styleKey] || MAP_STYLES.satellite;
   const b = track.bounds;
   // Leave room for the title (top) and the elevation profile (bottom).
   const fitW = W * 0.78;
