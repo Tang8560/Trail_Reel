@@ -1,5 +1,5 @@
 import { pointAtDistance } from './gpx';
-import { fmtClock, fmtDate, fmtDuration, fmtKm, fmtMeters } from './format';
+import { dayNumber, fmtClock, fmtDate, fmtDateRange, fmtDuration, fmtKm, fmtMeters } from './format';
 import { getPhotoBitmap, releasePhotoBitmap, seekVideo, waitForData } from './media';
 
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif';
@@ -98,6 +98,14 @@ export function createScene({ W, H, track, basemap, placed, settings, title, sub
     accent: settings.accent,
     segCache: new WeakMap(),
   };
+  // On a multi-day trip the clock alone is ambiguous, so prefix it with the day.
+  const span = tripSpan(track, placed.map((p) => p.t));
+  scene.clock = (ms) =>
+    span?.days > 1 ? `Day ${Math.max(1, dayNumber(ms, span.first))} · ${fmtClock(ms)}` : fmtClock(ms);
+  // Instagram Reels (and Shorts/TikTok) lay their UI over vertical video: header on top,
+  // caption + buttons at the bottom and right. Keep text and the HUD out of those zones.
+  const k = W / 1080;
+  scene.safe = H / W >= 1.6 ? { top: 220 * k, bottom: 400 * k, right: 150 * k } : { top: 0, bottom: 0, right: 0 };
   const blur = document.createElement('canvas');
   blur.width = Math.max(16, Math.round(W / 24));
   blur.height = Math.max(16, Math.round(H / 24));
@@ -143,7 +151,7 @@ function buildStaticLayers(scene) {
   strokeOutline(m, scene, 1);
 
   // Title bar.
-  scene.titleLayer = makeCanvas(W, 200 * u);
+  scene.titleLayer = makeCanvas(W, scene.safe.top + 200 * u);
   drawTitleBarStatic(scene.titleLayer.getContext('2d'), scene);
 
   // Bottom HUD band + elevation profile (base and accent-filled copy).
@@ -322,22 +330,23 @@ function drawTitleBar(ctx, scene, alpha = 1) {
 
 function drawTitleBarStatic(ctx, scene) {
   const { W, u } = scene;
+  const top = scene.safe.top;
   ctx.save();
-  const g = ctx.createLinearGradient(0, 0, 0, 200 * u);
+  const g = ctx.createLinearGradient(0, 0, 0, top + 200 * u);
   g.addColorStop(0, 'rgba(0,0,0,0.6)');
   g.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, 200 * u);
+  ctx.fillRect(0, 0, W, top + 200 * u);
   ctx.fillStyle = '#fff';
   ctx.textBaseline = 'alphabetic';
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 8 * u;
   fitFont(ctx, scene.title, 700, 48 * u, W * 0.6);
-  ctx.fillText(scene.title, 48 * u, 82 * u);
+  ctx.fillText(scene.title, 48 * u, top + 82 * u);
   if (scene.subtitle) {
     ctx.font = font(400, 26 * u);
     ctx.globalAlpha = 0.85;
-    ctx.fillText(scene.subtitle, 48 * u, 122 * u);
+    ctx.fillText(scene.subtitle, 48 * u, top + 122 * u);
   }
   ctx.restore();
 }
@@ -384,15 +393,15 @@ function statLine(scene, pos) {
   const { track } = scene;
   const parts = [fmtKm(pos.dist)];
   if (track.hasEle) parts.push(`+${fmtMeters(pos.gain)}`, `Alt ${fmtMeters(pos.ele)}`);
-  if (pos.time != null) parts.push(fmtClock(pos.time));
+  if (pos.time != null) parts.push(scene.clock(pos.time));
   return parts;
 }
 
 function hudGeometry(scene) {
-  const { W, H, u, track } = scene;
+  const { W, H, u, track, safe } = scene;
   const pad = 48 * u;
   const ph = track.hasEle ? 90 * u : 0;
-  return { band: 300 * u, pad, ph, pw: W - pad * 2, py: H - pad - ph };
+  return { band: 300 * u + safe.bottom, pad, ph, pw: W - pad - Math.max(pad, safe.right), py: H - safe.bottom - pad - ph };
 }
 
 function drawBottomHud(ctx, scene, dist, alpha = 1) {
@@ -505,7 +514,8 @@ function drawIntro(ctx, scene, seg, t, now) {
   } else {
     drawPlainBackground(ctx, scene);
   }
-  const a = easeOut(clamp((t - 0.3) / 0.8)) * out;
+  // The first second decides whether a viewer keeps watching: show the title right away.
+  const a = easeOut(clamp(0.3 + t / 0.5)) * out;
   drawCenteredTitle(ctx, scene, a, 1 - a);
   drawChips(ctx, scene, scene.stats.chips, H * 0.62, a);
 }
@@ -574,7 +584,7 @@ function insetGeometry(scene) {
   const w = Math.min(W, H) * (W > H ? 0.4 : 0.42);
   const h = w * 0.75;
   const x = W - w - 36 * u;
-  const y = 36 * u;
+  const y = 36 * u + scene.safe.top;
   let sw = (rb.maxX - rb.minX) * 1.3;
   let sh = (rb.maxY - rb.minY) * 1.3;
   if (sw / sh > w / h) sh = (sw * h) / w;
@@ -675,7 +685,7 @@ function drawMedia(ctx, scene, seg, src, sw, sh, t, now) {
 
   // Caption
   const lines = [];
-  if (seg.time != null) lines.push(fmtClock(seg.time));
+  if (seg.time != null) lines.push(scene.clock(seg.time));
   if (track && seg.dist != null) {
     const pos = pointAtDistance(track.points, seg.dist);
     const sub = [fmtKm(seg.dist, 1)];
@@ -684,25 +694,26 @@ function drawMedia(ctx, scene, seg, src, sw, sh, t, now) {
   }
   const a = easeOut(clamp((t - 0.3) / 0.6)) * clamp((seg.duration - t) / 0.4);
   if (lines.length) {
+    const B = H - scene.safe.bottom;
     ctx.save();
     ctx.globalAlpha = a;
-    const g = ctx.createLinearGradient(0, H - 220 * u, 0, H);
+    const g = ctx.createLinearGradient(0, B - 220 * u, 0, H);
     g.addColorStop(0, 'rgba(0,0,0,0)');
     g.addColorStop(1, 'rgba(0,0,0,0.6)');
     ctx.fillStyle = g;
-    ctx.fillRect(0, H - 220 * u, W, 220 * u);
+    ctx.fillRect(0, B - 220 * u, W, H - B + 220 * u);
     ctx.fillStyle = '#fff';
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 8 * u;
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = scene.accent;
-    ctx.fillRect(48 * u, H - 150 * u, 6 * u, lines.length > 1 ? 96 * u : 48 * u);
+    ctx.fillRect(48 * u, B - 150 * u, 6 * u, lines.length > 1 ? 96 * u : 48 * u);
     ctx.fillStyle = '#fff';
     ctx.font = font(700, 44 * u);
-    ctx.fillText(lines[0], 72 * u, H - 108 * u);
+    ctx.fillText(lines[0], 72 * u, B - 108 * u);
     if (lines[1]) {
       ctx.font = font(500, 30 * u);
-      ctx.fillText(lines[1], 72 * u, H - 62 * u);
+      ctx.fillText(lines[1], 72 * u, B - 62 * u);
     }
     ctx.restore();
   }
@@ -870,16 +881,31 @@ export async function runReel(canvas, scene, segments, { signal, onProgress, mus
   onProgress?.(1);
 }
 
+/**
+ * First timestamp of the trip and how many calendar days it covers. The GPX times win when
+ * there are any (a stray photo with a wrong clock shouldn't stretch the trip).
+ */
+function tripSpan(track, mediaTimes) {
+  const times = track?.startTime != null ? [track.startTime, track.endTime] : mediaTimes.filter((t) => t != null);
+  if (!times.length) return null;
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  return { first, last, days: dayNumber(last, first) };
+}
+
 export function buildStats(track, items) {
   const photos = items.filter((i) => i.kind === 'photo').length;
   const videos = items.length - photos;
+  const span = tripSpan(track, items.map((i) => i.time));
+  const days = span?.days > 1 ? `${span.days} days` : null;
   const mediaLine = [photos && `${photos} photo${photos > 1 ? 's' : ''}`, videos && `${videos} video${videos > 1 ? 's' : ''}`]
     .filter(Boolean)
     .join(' · ');
   if (!track) {
     return {
-      chips: mediaLine ? [mediaLine] : [],
+      chips: [days, mediaLine].filter(Boolean),
       tiles: [
+        ...(days ? [{ label: 'Days', value: String(span.days) }] : []),
         { label: 'Photos', value: String(photos) },
         { label: 'Videos', value: String(videos) },
       ],
@@ -888,17 +914,21 @@ export function buildStats(track, items) {
   const duration = track.duration;
   const chips = [fmtKm(track.totalDist, 1)];
   if (track.hasEle) chips.push(`▲ ${fmtMeters(track.gain)}`);
-  if (duration) chips.push(fmtDuration(duration));
+  // Over several days the total clock time (nights included) means little; show the days.
+  if (days) chips.push(days);
+  else if (duration) chips.push(fmtDuration(duration));
   const tiles = [{ label: 'Distance', value: fmtKm(track.totalDist, 1) }];
   if (track.hasEle) {
     tiles.push({ label: 'Elevation gain', value: fmtMeters(track.gain) });
     tiles.push({ label: 'Highest point', value: fmtMeters(track.maxEle) });
   }
-  if (duration) tiles.push({ label: 'Time', value: fmtDuration(duration) });
+  if (days) tiles.push({ label: 'Days', value: String(span.days) });
+  else if (duration) tiles.push({ label: 'Time', value: fmtDuration(duration) });
   return { chips, tiles };
 }
 
 export function defaultSubtitle(track, items) {
-  const t = track?.startTime ?? items.map((i) => i.time).filter(Boolean).sort((a, b) => a - b)[0];
-  return t ? fmtDate(t) : '';
+  const span = tripSpan(track, items.map((i) => i.time));
+  if (!span) return '';
+  return span.days > 1 ? fmtDateRange(span.first, span.last) : fmtDate(span.first);
 }

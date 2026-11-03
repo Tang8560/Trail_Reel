@@ -7,10 +7,10 @@ import { buildStats, createScene, defaultSubtitle, drawSegment, runReel } from '
 import { createMusicController, getRecordingAudioTrack, routeVideo, unlockMedia } from './lib/audio';
 import { pickMimeType, startRecording } from './lib/recorder';
 import { clearRecordings, latestRecording, loadRecordingBlob } from './lib/recordingStore';
-import { fmtBytes, fmtDateTime, fmtDuration, fmtKm } from './lib/format';
+import { dayNumber, fmtBytes, fmtDateTime, fmtDuration, fmtKm } from './lib/format';
 
 const RESOLUTIONS = {
-  '1080x1920': 'Vertical 1080×1920 (Reels / Shorts)',
+  '1080x1920': 'Instagram Reel 1080×1920 (9:16)',
   '1920x1080': 'Landscape 1080p (16:9)',
   '1280x720': 'Landscape 720p (16:9)',
   '1080x1080': 'Square 1080×1080',
@@ -20,13 +20,14 @@ const IS_TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coar
 
 const DEFAULTS = {
   title: '',
-  resolution: IS_TOUCH ? '1080x1920' : '1920x1080',
+  resolution: '1080x1920',
   fps: 30,
   mapStyle: 'satellite',
-  photoSeconds: 3.5,
-  maxClip: 8,
+  // Snappy pacing keeps Reel viewers watching to the end.
+  photoSeconds: 2.5,
+  maxClip: 5,
   clipStart: 0,
-  routeSeconds: 20,
+  routeSeconds: 12,
   clockOffset: 0,
   videoAudio: true,
   videoVolume: 1,
@@ -349,6 +350,20 @@ export default function App() {
   const photos = items.filter((i) => i.kind === 'photo').length;
   const videos = items.length - photos;
   const durationLabel = `${Math.floor(estSeconds / 60)}:${String(Math.round(estSeconds % 60)).padStart(2, '0')}`;
+  // Instagram caps Reels at 3 minutes, and short ones get watched to the end more often.
+  const lengthHint =
+    estSeconds > 180 ? ' ⚠ over the 3-min Reel limit' : estSeconds > 90 ? ' · shorten for more views' : '';
+
+  const [copied, setCopied] = useState(false);
+  const copyCaption = async () => {
+    try {
+      await navigator.clipboard.writeText(reelCaption(settings.title.trim() || track?.name || 'My Hike', track));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      setErrors([`Copy failed: ${e.message}`]);
+    }
+  };
 
   return (
     <div className="app">
@@ -471,7 +486,7 @@ export default function App() {
                     {fmtKm(track.totalDist, 1)}
                     {track.hasEle && ` · ▲ ${Math.round(track.gain)} m`}
                     {track.hasTime && ` · ${fmtDuration(track.duration)}`}
-                    {` · ${track.points.length.toLocaleString()} pts`}
+                    {` · ${track.points.length.toLocaleString('en-US')} pts`}
                   </span>
                 </div>
               </div>
@@ -587,7 +602,8 @@ export default function App() {
                   ● Create video
                 </button>
                 <span className="muted est">
-                  ≈ {durationLabel} · {segments.length} scenes · {mime ? mime.split(';')[0].replace('video/', '').toUpperCase() : 'recording unsupported'}
+                  ≈ {durationLabel}
+                  {lengthHint} · {segments.length} scenes · {mime ? mime.split(';')[0].replace('video/', '').toUpperCase() : 'recording unsupported'}
                 </span>
               </>
             )}
@@ -611,6 +627,9 @@ export default function App() {
                   <a className={`${canShare ? 'secondary' : 'primary'} button`} href={output.url} download={output.name}>
                     Download
                   </a>
+                  <button className="secondary" onClick={copyCaption}>
+                    {copied ? '✓ Copied' : 'Copy IG caption'}
+                  </button>
                   <button className="ghost" onClick={discardOutput}>
                     Discard
                   </button>
@@ -662,6 +681,21 @@ export default function App() {
 }
 
 const fileBase = (title) => (title || 'hike').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'hike';
+
+/** A ready-to-paste Instagram caption: title, hike stats and hashtags. */
+function reelCaption(title, track) {
+  const lines = [title];
+  if (track) {
+    const stats = [`📍 ${fmtKm(track.totalDist, 1)}`];
+    if (track.hasEle) stats.push(`⛰ +${Math.round(track.gain)} m`);
+    const days = track.startTime != null ? dayNumber(track.endTime, track.startTime) : 1;
+    if (days > 1) stats.push(`🏕 ${days} days`);
+    else if (track.duration) stats.push(`⏱ ${fmtDuration(track.duration)}`);
+    lines.push(stats.join(' · '));
+  }
+  lines.push('', '#hiking #hike #trail #outdoors #mountains #naturelovers #reels');
+  return lines.join('\n');
+}
 
 function makeOutput(blob, name) {
   return { url: URL.createObjectURL(blob), name, size: blob.size, file: new File([blob], name, { type: blob.type }) };

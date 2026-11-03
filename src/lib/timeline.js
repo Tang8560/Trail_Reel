@@ -49,7 +49,8 @@ export function placeMedia(items, track, clockOffsetMin = 0) {
 const MAP_LIKE = new Set(['intro', 'route', 'outro']);
 
 export function buildSegments(placed, track, s) {
-  const segs = [{ type: 'intro', duration: 4 }];
+  // Short intro/outro: Reel viewers swipe away from slow openings.
+  const segs = [{ type: 'intro', duration: 2.5 }];
   let cur = 0;
   const addRoute = (to) => {
     if (!track) return;
@@ -83,7 +84,7 @@ export function buildSegments(placed, track, s) {
     }
   }
   if (track) addRoute(track.totalDist);
-  segs.push({ type: 'outro', duration: 5 });
+  segs.push({ type: 'outro', duration: 3.5 });
 
   // Dip to black between segments, except when the map simply continues.
   segs.forEach((seg, i) => {
@@ -93,6 +94,8 @@ export function buildSegments(placed, track, s) {
     seg.fadeIn = !(mapLike(seg) && mapLike(prev));
     seg.fadeOut = !(mapLike(seg) && mapLike(next));
   });
+  // Open on a picture, not black: the first frame is what the feed shows.
+  segs[0].fadeIn = false;
   return segs;
 }
 
