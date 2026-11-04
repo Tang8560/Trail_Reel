@@ -131,6 +131,11 @@ export function createScene({ W, H, track, basemap, terrain, placed, settings, t
       const [x, y] = basemap.toScreen(pt.lat, pt.lon);
       return { x, y, dist: p.dist, img: makePin(p.item.thumbCanvas, settings.accent) };
     });
+    scene.summits = track.summits.map((sm) => {
+      const [x, y] = basemap.toScreen(sm.lat, sm.lon);
+      const label = sm.name ? `${sm.name} ${fmtMeters(sm.ele)}` : fmtMeters(sm.ele);
+      return { x, y, dist: sm.dist, label };
+    });
     // How the route is placed on screen; the 3D view swaps in projected points.
     scene.flat = { pts: scene.pts, at: basemap.toScreen, pin: (p) => [p.x, p.y] };
     if (terrain && settings.route3d) {
@@ -139,7 +144,7 @@ export function createScene({ W, H, track, basemap, terrain, placed, settings, t
       scene.view3d = getTerrainView(basemap, terrain, base);
       if (scene.view3d) {
         scene.ptsH = hs.map((h) => h - base);
-        for (const pin of scene.pins) pin.h = terrain.heightAt(pin.x, pin.y) - base;
+        for (const pin of [...scene.pins, ...scene.summits]) pin.h = terrain.heightAt(pin.x, pin.y) - base;
         scene.headingAt = buildHeading(track, basemap, settings.routeSeconds);
       }
     }
@@ -263,7 +268,13 @@ function strokeOutline(ctx, scene, k, pts = scene.pts) {
  * Traveled portion + start/finish dots + photo pins + position marker, drawn over a layer
  * that already has the route outline. k scales line widths.
  */
-function drawRouteLayer(ctx, scene, dist, now, { k = 1, pins = true, marker = true, routeAlpha = 1, view = scene.flat } = {}) {
+function drawRouteLayer(
+  ctx,
+  scene,
+  dist,
+  now,
+  { k = 1, pins = true, summits = true, marker = true, routeAlpha = 1, view = scene.flat } = {}
+) {
   const { track, u, accent } = scene;
   const { pts } = view;
   ctx.save();
@@ -292,6 +303,10 @@ function drawRouteLayer(ctx, scene, dist, now, { k = 1, pins = true, marker = tr
   };
   dot(pts[pts.length - 1], '#e5484d');
   dot(pts[0], '#30a46c');
+
+  if (summits && scene.summits) {
+    for (const sm of scene.summits) drawSummit(ctx, scene, sm, view.pin(sm), dist, k);
+  }
 
   if (pins && scene.pins) {
     const pop = track.totalDist * 0.012;
@@ -330,6 +345,51 @@ function drawRouteLayer(ctx, scene, dist, now, { k = 1, pins = true, marker = tr
   }
   ctx.restore();
   return pos;
+}
+
+/**
+ * A summit flag: a peak badge on the trail with its elevation (and name, from a GPX
+ * waypoint) on a tag above. Shown from the start so viewers see where the hike is headed;
+ * it turns to the accent colour and pops once the hiker gets there.
+ */
+function drawSummit(ctx, scene, sm, [x, y], dist, k) {
+  const { u, accent, track } = scene;
+  const reached = clamp((dist - sm.dist) / (track.totalDist * 0.012));
+  const s = u * k * (1 + 0.25 * Math.sin(Math.PI * reached));
+  const color = reached > 0 ? accent : '#fff';
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 10 * s;
+  // Mountain badge sitting on the trail.
+  const r = 17 * s;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 1.5);
+  ctx.lineTo(x + r, y + r * 0.3);
+  ctx.lineTo(x - r, y + r * 0.3);
+  ctx.closePath();
+  ctx.fillStyle = reached > 0 ? accent : '#1b1b1f';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 4 * s;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  // Elevation tag above it.
+  ctx.font = font(700, 26 * s);
+  const tw = ctx.measureText(sm.label).width;
+  const th = 40 * s;
+  const ty = y - r * 1.5 - 10 * s - th;
+  roundRect(ctx, x - tw / 2 - 14 * s, ty, tw + 28 * s, th, th / 2);
+  ctx.fillStyle = 'rgba(20,20,24,0.78)';
+  ctx.fill();
+  ctx.lineWidth = 2.5 * s;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(sm.label, x, ty + th / 2 + 1 * s);
+  ctx.restore();
 }
 
 function hexAlpha(hex, a) {
@@ -524,7 +584,7 @@ function drawIntro(ctx, scene, seg, t, now) {
     ctx.globalAlpha = routeAlpha;
     ctx.drawImage(scene.mapLayer, 0, 0);
     ctx.restore();
-    drawRouteLayer(ctx, scene, 0, now, { pins: false, marker: t > 1, routeAlpha });
+    drawRouteLayer(ctx, scene, 0, now, { pins: false, summits: false, marker: t > 1, routeAlpha });
     ctx.fillStyle = `rgba(0,0,0,${0.4 * out})`;
     ctx.fillRect(0, 0, W, H);
     // As the intro ends, the persistent HUD fades in so the route segment continues seamlessly.
@@ -730,7 +790,7 @@ function drawInsetMap(ctx, scene, dist, now) {
   ctx.clip();
   ctx.translate(x - sx * s, y - sy * s);
   ctx.scale(s, s);
-  drawRouteLayer(ctx, scene, dist, now, { k, pins: false });
+  drawRouteLayer(ctx, scene, dist, now, { k, pins: false, summits: false });
   ctx.restore();
   roundRect(ctx, x, y, w, h, 18 * u);
   ctx.lineWidth = 3 * u;

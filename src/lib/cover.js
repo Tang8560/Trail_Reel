@@ -58,7 +58,21 @@ function drawCoverImage(ctx, img, iw, ih, W, H) {
   ctx.drawImage(img, (W - iw * s) / 2, (H - ih * s) / 2, iw * s, ih * s);
 }
 
-/** The route's shape, fitted into a box, as a glowing line with start and finish dots. */
+function drawPeak(ctx, x, y, r, fill, u) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 1.5);
+  ctx.lineTo(x + r, y + r * 0.3);
+  ctx.lineTo(x - r, y + r * 0.3);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 4 * u;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+}
+
+/** The route's shape, fitted into a box, as a glowing line with start, finish and summits. */
 function drawRouteShape(ctx, track, box, accent, u) {
   const pts = track.points;
   const step = Math.max(1, Math.floor(pts.length / 2500));
@@ -76,6 +90,7 @@ function drawRouteShape(ctx, track, box, accent, u) {
   const ox = box.x + (box.w - w * s) / 2;
   const oy = box.y + (box.h - h * s) / 2;
   const sp = xy.map(([x, y]) => [ox + (x - minX) * s, oy + (y - minY) * s]);
+  const at = (p) => [ox + (p.lon * Math.cos(lat0) - minX) * s, oy + (-p.lat - minY) * s];
 
   ctx.save();
   ctx.lineJoin = 'round';
@@ -102,10 +117,14 @@ function drawRouteShape(ctx, track, box, accent, u) {
   };
   dot(sp[sp.length - 1], '#e5484d');
   dot(sp[0], '#30a46c');
+  for (const sm of track.summits) {
+    const [x, y] = at(sm);
+    drawPeak(ctx, x, y, 17 * u, accent, u);
+  }
   ctx.restore();
 }
 
-/** Elevation silhouette across the bottom of the safe area, with the high point labelled. */
+/** Elevation silhouette across the bottom of the safe area, with each summit labelled. */
 function drawProfile(ctx, track, box, accent, u) {
   const N = 240;
   const ele = Array.from({ length: N + 1 }, (_, i) => pointAtDistance(track.points, (track.totalDist * i) / N).ele);
@@ -128,16 +147,30 @@ function drawProfile(ctx, track, box, accent, u) {
   ctx.lineWidth = 3 * u;
   ctx.stroke();
 
+  // Without a clear summit (a flat or one-way hike), label the high point instead.
   const top = ele.indexOf(Math.max(...ele));
-  const px = X(top);
-  const py = Y(ele[top]);
-  ctx.fillStyle = '#fff';
+  const summits = track.summits.length
+    ? [...track.summits].sort((a, b) => b.ele - a.ele) // the higher summit wins a label clash
+    : [{ dist: (track.totalDist * top) / N, ele: track.maxEle }];
   ctx.font = font(700, 30 * u);
-  ctx.textAlign = px < box.x + box.w * 0.15 ? 'left' : px > box.x + box.w * 0.85 ? 'right' : 'center';
   ctx.textBaseline = 'bottom';
   ctx.shadowColor = 'rgba(0,0,0,0.7)';
   ctx.shadowBlur = 8 * u;
-  ctx.fillText(`▲ ${fmtMeters(track.maxEle)}`, px, py - 14 * u);
+  ctx.fillStyle = '#fff';
+  const taken = [];
+  for (const sm of summits) {
+    const px = box.x + (box.w * sm.dist) / track.totalDist;
+    const py = Y(pointAtDistance(track.points, sm.dist).ele) - 14 * u;
+    const text = `▲ ${fmtMeters(sm.ele)}`;
+    const tw = ctx.measureText(text).width;
+    const align = px < box.x + box.w * 0.15 ? 'left' : px > box.x + box.w * 0.85 ? 'right' : 'center';
+    const l = align === 'left' ? px : align === 'right' ? px - tw : px - tw / 2;
+    const rect = { l, r: l + tw, t: py - 34 * u, b: py };
+    if (taken.some((o) => rect.l < o.r + 16 * u && rect.r > o.l - 16 * u && rect.t < o.b && rect.b > o.t)) continue;
+    taken.push(rect);
+    ctx.textAlign = align;
+    ctx.fillText(text, px, py);
+  }
   ctx.restore();
 }
 

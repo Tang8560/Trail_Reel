@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseGpx } from './lib/gpx';
+import { nameSummits } from './lib/peaks';
 import { disposeMedia, kindOf, loadMedia, readIntoMemory } from './lib/media';
 import { buildBasemap, MAP_STYLES } from './lib/map';
 import { buildTerrain } from './lib/terrain3d';
@@ -97,7 +98,12 @@ export default function App() {
       try {
         const file = kind ? await readIntoMemory(picked) : picked;
         if (kind === 'gpx') {
-          setTrack(parseGpx(await file.text()));
+          const parsed = parseGpx(await file.text());
+          if (parsed.summits.some((s) => !s.name)) {
+            setBusy({ label: 'Looking up summit names…', done, total: files.length });
+            parsed.summits = await nameSummits(parsed.summits);
+          }
+          setTrack(parsed);
           setGpxName(file.name);
         } else if (kind === 'audio') {
           setMusic((old) => {

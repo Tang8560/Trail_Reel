@@ -115,6 +115,74 @@ export function computeElevationGain(points) {
   return { gain, loss };
 }
 
+// A summit is a high point that rises at least this much above the lowest ground on the
+// trail between it and any higher ground (its prominence along the hike, the usual
+// "ranked peak" rule). Smaller bumps are false summits on a ridge.
+const SUMMIT_PROMINENCE_M = 100;
+const SUMMIT_STEP_M = 25; // elevation is resampled this often along the trail...
+const SUMMIT_SMOOTH = 2; // ...and averaged over this many samples either side
+const SUMMIT_SAME_M = 300; // an out-and-back reaches the same summit twice: count it once
+const MAX_SUMMITS = 6;
+
+/**
+ * Summits along the trail, in the order they are first reached:
+ * { lat, lon, ele, dist, name }. Named after a nearby GPX waypoint when there is one.
+ */
+function findSummits(points, waypoints) {
+  const total = points[points.length - 1].dist;
+  const n = Math.floor(total / SUMMIT_STEP_M) + 1;
+  if (n < 3) return [];
+  const samples = Array.from({ length: n }, (_, i) => pointAtDistance(points, i * SUMMIT_STEP_M));
+  const ele = samples.map((_, i) => {
+    let sum = 0;
+    let count = 0;
+    for (let j = Math.max(0, i - SUMMIT_SMOOTH); j <= Math.min(n - 1, i + SUMMIT_SMOOTH); j++) {
+      sum += samples[j].ele;
+      count++;
+    }
+    return sum / count;
+  });
+
+  const found = [];
+  for (let i = 1; i < n - 1; i++) {
+    const e = ele[i];
+    if (ele[i - 1] >= e || ele[i + 1] > e) continue;
+    // Walk out each way until higher ground (or the trailhead), tracking the lowest point.
+    // The track's ends count as bases too, so a hike that ends on a top isn't a summit.
+    let left = e;
+    for (let j = i - 1; j >= 0 && ele[j] <= e; j--) left = Math.min(left, ele[j]);
+    let right = e;
+    for (let j = i + 1; j < n && ele[j] <= e; j++) right = Math.min(right, ele[j]);
+    if (e - Math.max(left, right) < SUMMIT_PROMINENCE_M) continue;
+    // Report the recorded high point at the top, so the label matches "Highest point".
+    let top = samples[i];
+    for (const p of points) {
+      if (Math.abs(p.dist - top.dist) <= SUMMIT_STEP_M * (SUMMIT_SMOOTH + 1) && p.ele > top.ele) top = p;
+    }
+    found.push({ lat: top.lat, lon: top.lon, ele: top.ele, dist: top.dist });
+  }
+
+  const summits = [];
+  for (const s of found.sort((a, b) => b.ele - a.ele)) {
+    const same = summits.find((o) => haversine(o, s) < SUMMIT_SAME_M);
+    if (same) same.dist = Math.min(same.dist, s.dist);
+    else if (summits.length < MAX_SUMMITS) summits.push(s);
+  }
+  for (const s of summits) {
+    let best = null;
+    let bestD = SUMMIT_SAME_M;
+    for (const w of waypoints) {
+      const d = haversine(w, s);
+      if (w.name && d < bestD) {
+        best = w;
+        bestD = d;
+      }
+    }
+    s.name = best ? best.name : '';
+  }
+  return summits.sort((a, b) => a.dist - b.dist);
+}
+
 function readPoint(n) {
   const lat = parseFloat(n.getAttribute('lat'));
   const lon = parseFloat(n.getAttribute('lon'));
@@ -161,6 +229,13 @@ export function parseGpx(text) {
   }
 
   const { gain, loss } = computeElevationGain(points);
+  const waypoints = Array.from(doc.getElementsByTagName('wpt'))
+    .map((w) => {
+      const p = readPoint(w);
+      return p && { lat: p.lat, lon: p.lon, name: childText(w, 'name') || '' };
+    })
+    .filter(Boolean);
+  const summits = hasEle ? findSummits(points, waypoints) : [];
   let minEle = Infinity;
   let maxEle = -Infinity;
   for (const p of points) {
@@ -201,6 +276,7 @@ export function parseGpx(text) {
     minEle,
     maxEle,
     hasEle,
+    summits,
     hasTime,
     duration,
     startTime: hasTime ? timed[0].time : null,
