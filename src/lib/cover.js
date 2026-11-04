@@ -1,7 +1,7 @@
 import { pointAtDistance } from './gpx';
 import { fmtMeters } from './format';
 import { getPhotoBitmap, releasePhotoBitmap } from './media';
-import { drawPlatformLogo } from './logos';
+import { drawPlatformOutline } from './logos';
 
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif';
 const font = (weight, px) => `${weight} ${Math.round(px)}px ${FONT}`;
@@ -237,7 +237,7 @@ export async function renderCover({ W, H, track, placed, title, subtitle, stats,
   const cx = W / 2;
   const maxW = W * 0.86;
 
-  if (track) drawRouteShape(ctx, track, { x: W * 0.2, y: sy(0.05), w: W * 0.6, h: safeH * 0.34 }, accent, u);
+  if (track) drawRouteShape(ctx, track, { x: W * 0.2, y: sy(0.08), w: W * 0.6, h: safeH * 0.31 }, accent, u);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#fff';
@@ -304,20 +304,26 @@ export async function renderCover({ W, H, track, placed, title, subtitle, stats,
 
   if (track?.hasEle) drawProfile(ctx, track, { x: W * 0.07, y: sy(0.86), w: W * 0.86, h: safeH * 0.1 }, accent, u);
 
-  // The creator's handle, small, along the bottom of the grid-safe area.
+  // The creator's handle, small, in the top-left corner of the grid-safe area, with the
+  // platform mark as see-through white line art.
   if (watermark) {
     ctx.save();
+    ctx.globalAlpha = 0.85;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.font = font(700, 28 * u);
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.shadowColor = 'rgba(0,0,0,0.6)';
-    ctx.shadowBlur = 8 * u;
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 6 * u;
     const size = 34 * u;
     const gap = 10 * u;
-    const left = W / 2 - (size + gap + ctx.measureText(watermark).width) / 2;
-    ctx.fillText(watermark, left + size + gap, sy(0.985));
-    drawPlatformLogo(ctx, platform, left, sy(0.985) - size / 2, size);
+    const left = 48 * u;
+    const y = sy(0) + 56 * u;
+    const room = W * 0.45 - size - gap;
+    const tw = ctx.measureText(watermark).width;
+    if (tw > room) ctx.font = font(700, (28 * u * room) / tw);
+    ctx.fillText(watermark, left + size + gap, y);
+    drawPlatformOutline(ctx, platform, left, y - size / 2, size);
     ctx.restore();
   }
 

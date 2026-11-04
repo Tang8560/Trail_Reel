@@ -69,3 +69,42 @@ export function drawPlatformLogo(ctx, platform, x, y, size) {
   if (platform === 'youtube') youtube(ctx, x, y, size);
   else instagram(ctx, x, y, size);
 }
+
+/**
+ * The same marks as thin white line art, see-through, for laying over a photo (the cover).
+ * Uses the current globalAlpha; size × size box at (x, y).
+ */
+export function drawPlatformOutline(ctx, platform, x, y, s) {
+  ctx.save();
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = '#fff';
+  ctx.lineWidth = s * 0.075;
+  ctx.lineJoin = 'round';
+  if (platform === 'youtube') {
+    const h = s * 0.7;
+    const top = y + (s - h) / 2;
+    const lw = ctx.lineWidth;
+    roundRect(ctx, x + lw / 2, top + lw / 2, s - lw, h - lw, h * 0.28);
+    ctx.stroke();
+    const cx = x + s / 2 + s * 0.03;
+    const cy = top + h / 2;
+    const t = h * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(cx - t * 0.8, cy - t);
+    ctx.lineTo(cx + t, cy);
+    ctx.lineTo(cx - t * 0.8, cy + t);
+    ctx.closePath();
+    ctx.stroke();
+  } else {
+    const lw = ctx.lineWidth;
+    roundRect(ctx, x + lw / 2, y + lw / 2, s - lw, s - lw, s * 0.27);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x + s / 2, y + s / 2, s * 0.21, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x + s * 0.75, y + s * 0.25, s * 0.055, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}

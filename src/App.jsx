@@ -632,7 +632,7 @@ export default function App() {
                   value={settings.watermark}
                   onChange={set('watermark')}
                 />
-                <small className="muted">Your handle, shown in the corner and on the end card. Leave empty for none.</small>
+                <small className="muted">Your handle, shown on the cover. Leave empty for none.</small>
               </label>
               {settings.watermark.trim() && (
                 <div className="segmented two" role="radiogroup" aria-label="Watermark platform">

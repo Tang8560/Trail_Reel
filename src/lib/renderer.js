@@ -2,7 +2,6 @@ import { pointAtDistance } from './gpx';
 import { dayNumber, fmtClock, fmtDate, fmtDateRange, fmtDuration, fmtKm, fmtMeters } from './format';
 import { getPhotoBitmap, releasePhotoBitmap, seekVideo, waitForData } from './media';
 import { getTerrainView } from './terrain3d';
-import { PLATFORMS, drawPlatformLogo } from './logos';
 
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif';
 const FADE = 0.45;
@@ -98,8 +97,6 @@ export function createScene({ W, H, track, basemap, terrain, placed, settings, t
     subtitle,
     stats,
     accent: settings.accent,
-    watermark: (settings.watermark || '').trim(),
-    platform: PLATFORMS[settings.watermarkPlatform] ? settings.watermarkPlatform : 'instagram',
     segCache: new WeakMap(),
   };
   // On a multi-day trip the clock alone is ambiguous, so prefix it with the day.
@@ -838,65 +835,6 @@ function drawOutro(ctx, scene, seg, t, now) {
     ctx.fillText(tile.label.toUpperCase(), x + tw / 2, y + th * 0.82);
   });
   ctx.restore();
-  const rows = Math.ceil(tiles.length / cols);
-  drawFollow(ctx, scene, top + rows * (th + gap) + 50 * u, easeOut(clamp((t - 0.5) / 0.6)));
-}
-
-/**
- * The creator's handle, burned into the video like the TikTok / Shorts watermark, so a
- * reposted or downloaded reel still credits them. Top right, across from the title and under
- * the app's header; below the inset map when that takes the corner.
- */
-function drawWatermark(ctx, scene, seg) {
-  const { W, u, watermark, platform } = scene;
-  if (!watermark) return;
-  const inset = scene.inset && seg.dist != null && scene.settings.insetMap && (seg.type === 'photo' || seg.type === 'video');
-  const right = W - 48 * u;
-  const y = inset ? scene.inset.y + scene.inset.h + 52 * u : scene.safe.top + 82 * u;
-  ctx.save();
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'alphabetic';
-  ctx.shadowColor = 'rgba(0,0,0,0.6)';
-  ctx.shadowBlur = 10 * u;
-  fitFont(ctx, watermark, 700, 34 * u, W * 0.3);
-  const tw = ctx.measureText(watermark).width;
-  ctx.globalAlpha = 0.9;
-  ctx.fillStyle = '#fff';
-  ctx.fillText(watermark, right, y);
-  // The platform's logo before the handle, centred on the text.
-  const size = 40 * u;
-  drawPlatformLogo(ctx, platform, right - tw - 12 * u - size, y - 12 * u - size / 2, size);
-  ctx.restore();
-}
-
-/** End card: the handle with the platform logo, big, so the reel ends on who to follow. */
-function drawFollow(ctx, scene, y, a) {
-  const { W, u, watermark, platform } = scene;
-  if (!watermark) return;
-  ctx.save();
-  ctx.globalAlpha = a;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = font(600, 24 * u);
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.fillText(PLATFORMS[platform].cta, W / 2, y);
-  // A white button-like pill: both logos keep their own colours on it.
-  fitFont(ctx, watermark, 800, 50 * u, W * 0.6);
-  const tw = ctx.measureText(watermark).width;
-  const ph = 84 * u;
-  const py = y + 30 * u;
-  const logo = 52 * u;
-  const gap = 16 * u;
-  const pw = 32 * u + logo + gap + tw + 40 * u;
-  const px = W / 2 - pw / 2;
-  roundRect(ctx, px, py, pw, ph, ph / 2);
-  ctx.fillStyle = '#fff';
-  ctx.fill();
-  drawPlatformLogo(ctx, platform, px + 32 * u, py + (ph - logo) / 2, logo);
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#111';
-  ctx.fillText(watermark, px + 32 * u + logo + gap, py + ph / 2 + 2 * u);
-  ctx.restore();
 }
 
 function insetGeometry(scene) {
@@ -1071,7 +1009,6 @@ export function drawSegment(ctx, scene, seg, t, now) {
       break;
   }
   ctx.restore();
-  if (seg.type !== 'outro') drawWatermark(ctx, scene, seg);
   let black = 0;
   if (seg.fadeIn) black = Math.max(black, 1 - clamp(t / FADE));
   if (seg.fadeOut) black = Math.max(black, 1 - clamp((seg.duration - t) / FADE));
