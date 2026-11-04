@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseGpx } from './lib/gpx';
 import { lookupPeaks } from './lib/peaks';
+import { PLATFORMS, drawPlatformLogo } from './lib/logos';
 import { disposeMedia, kindOf, loadMedia, readIntoMemory } from './lib/media';
 import { buildBasemap, MAP_STYLES } from './lib/map';
 import { buildTerrain } from './lib/terrain3d';
@@ -39,7 +40,36 @@ const DEFAULTS = {
   route3d: true,
   accent: '#ff6b35',
   bitrate: IS_TOUCH ? 8 : 12,
+  watermark: '',
+  watermarkPlatform: 'instagram',
 };
+
+// The watermark is the same on every video, so remember it on this device.
+const SAVED = { watermark: 'trailreel.watermark', watermarkPlatform: 'trailreel.watermarkPlatform' };
+const savedSettings = () => {
+  const out = {};
+  try {
+    for (const [k, key] of Object.entries(SAVED)) {
+      const v = localStorage.getItem(key);
+      if (v != null) out[k] = v;
+    }
+  } catch {
+    // storage blocked: start from the defaults
+  }
+  return out;
+};
+
+/** The platform logo as an image for the picker, drawn by the same code as the video. */
+const logoUrls = {};
+function logoUrl(platform) {
+  if (!logoUrls[platform]) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    drawPlatformLogo(c.getContext('2d'), platform, 0, 0, 64);
+    logoUrls[platform] = c.toDataURL();
+  }
+  return logoUrls[platform];
+}
 
 /** Keep the screen on while rendering — iOS suspends the page when it locks. */
 async function requestWakeLock() {
@@ -57,7 +87,7 @@ export default function App() {
   const [music, setMusic] = useState(null); // the user's own song
   // Background music: 'file' (user's song) or 'none'.
   const [musicMode, setMusicMode] = useState('file');
-  const [settings, setSettings] = useState(DEFAULTS);
+  const [settings, setSettings] = useState(() => ({ ...DEFAULTS, ...savedSettings() }));
   const [busy, setBusy] = useState(null);
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
@@ -79,6 +109,14 @@ export default function App() {
     const v = t === 'checkbox' ? e.target.checked : t === 'number' || t === 'range' ? Number(e.target.value) : e.target.value;
     setSettings((s) => ({ ...s, [k]: v }));
   };
+
+  useEffect(() => {
+    try {
+      for (const [k, key] of Object.entries(SAVED)) localStorage.setItem(key, settings[k]);
+    } catch {
+      // private mode: it just won't be remembered
+    }
+  }, [settings.watermark, settings.watermarkPlatform]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const placed = useMemo(() => placeMedia(items, track, settings.clockOffset), [items, track, settings.clockOffset]);
   const segments = useMemo(() => buildSegments(placed, track, settings), [placed, track, settings]);
@@ -389,6 +427,8 @@ export default function App() {
       subtitle: defaultSubtitle(track, items),
       stats: buildStats(track, items),
       accent: settings.accent,
+      watermark: settings.watermark.trim(),
+      platform: settings.watermarkPlatform,
     })
       .then((blob) => {
         if (cancelled || !blob) return;
@@ -580,6 +620,36 @@ export default function App() {
                 Title
                 <input type="text" placeholder={track?.name || 'My Hike'} value={settings.title} onChange={set('title')} />
               </label>
+              <label>
+                Watermark
+                <input
+                  type="text"
+                  placeholder="@yourname"
+                  maxLength={40}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={settings.watermark}
+                  onChange={set('watermark')}
+                />
+                <small className="muted">Your handle, shown in the corner and on the end card. Leave empty for none.</small>
+              </label>
+              {settings.watermark.trim() && (
+                <div className="segmented two" role="radiogroup" aria-label="Watermark platform">
+                  {Object.entries(PLATFORMS).map(([key, p]) => (
+                    <button
+                      key={key}
+                      role="radio"
+                      aria-checked={settings.watermarkPlatform === key}
+                      className={settings.watermarkPlatform === key ? 'on' : ''}
+                      onClick={() => setSettings((s) => ({ ...s, watermarkPlatform: key }))}
+                    >
+                      <img src={logoUrl(key)} alt="" width="16" height="16" />
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="row2">
                 <label>
                   Format

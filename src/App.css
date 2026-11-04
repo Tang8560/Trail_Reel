@@ -611,6 +611,13 @@ figcaption {
   color: var(--muted);
   border-radius: 8px;
 }
+.segmented.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.segmented button img {
+  margin-right: 6px;
+  vertical-align: -3px;
+}
 .segmented button.on {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #1b0d05;

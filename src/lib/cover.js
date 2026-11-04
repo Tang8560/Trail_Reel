@@ -1,6 +1,7 @@
 import { pointAtDistance } from './gpx';
 import { fmtMeters } from './format';
 import { getPhotoBitmap, releasePhotoBitmap } from './media';
+import { drawPlatformLogo } from './logos';
 
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif';
 const font = (weight, px) => `${weight} ${Math.round(px)}px ${FONT}`;
@@ -179,7 +180,7 @@ function drawProfile(ctx, track, box, accent, u) {
  * shape, title, dates, stats and elevation profile. Key content stays inside the middle 3:4
  * area, which Instagram's profile grid shows when it crops a reel cover.
  */
-export async function renderCover({ W, H, track, placed, title, subtitle, stats, accent }) {
+export async function renderCover({ W, H, track, placed, title, subtitle, stats, accent, watermark, platform }) {
   const u = Math.min(W, H) / 1080;
   const canvas = document.createElement('canvas');
   canvas.width = W;
@@ -302,6 +303,23 @@ export async function renderCover({ W, H, track, placed, title, subtitle, stats,
   ctx.shadowBlur = 0;
 
   if (track?.hasEle) drawProfile(ctx, track, { x: W * 0.07, y: sy(0.86), w: W * 0.86, h: safeH * 0.1 }, accent, u);
+
+  // The creator's handle, small, along the bottom of the grid-safe area.
+  if (watermark) {
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = font(700, 28 * u);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 8 * u;
+    const size = 34 * u;
+    const gap = 10 * u;
+    const left = W / 2 - (size + gap + ctx.measureText(watermark).width) / 2;
+    ctx.fillText(watermark, left + size + gap, sy(0.985));
+    drawPlatformLogo(ctx, platform, left, sy(0.985) - size / 2, size);
+    ctx.restore();
+  }
 
   const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.92));
   return blob;
