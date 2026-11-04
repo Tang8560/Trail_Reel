@@ -343,14 +343,16 @@ export function getTerrainView(basemap, terrain, base) {
       const vp = mul(perspective(FOV, W / H, D * 0.05, D * 8), lookAt(eye, target, up));
       cam = { b, hk, vp };
     },
-    /** Basemap pixel (x, y) at `h` meters → output pixel. */
+    /** Basemap pixel (x, y) at `h` meters → output pixel, plus depth (≤ 0: behind the camera). */
     project(x, y, h) {
       const m = cam.vp;
       const Y = h * cam.hk;
-      const w = Math.max(1e-3, m[3] * x + m[7] * Y + m[11] * y + m[15]);
+      const depth = m[3] * x + m[7] * Y + m[11] * y + m[15];
+      const w = Math.max(1e-3, depth);
       return [
         (((m[0] * x + m[4] * Y + m[8] * y + m[12]) / w + 1) / 2) * W,
         ((1 - (m[1] * x + m[5] * Y + m[9] * y + m[13]) / w) / 2) * H,
+        depth,
       ];
     },
     render() {

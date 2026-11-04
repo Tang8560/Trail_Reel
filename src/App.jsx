@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseGpx } from './lib/gpx';
-import { nameSummits } from './lib/peaks';
+import { lookupPeaks } from './lib/peaks';
 import { disposeMedia, kindOf, loadMedia, readIntoMemory } from './lib/media';
 import { buildBasemap, MAP_STYLES } from './lib/map';
 import { buildTerrain } from './lib/terrain3d';
@@ -99,9 +99,10 @@ export default function App() {
         const file = kind ? await readIntoMemory(picked) : picked;
         if (kind === 'gpx') {
           const parsed = parseGpx(await file.text());
-          if (parsed.summits.some((s) => !s.name)) {
-            setBusy({ label: 'Looking up summit names…', done, total: files.length });
-            parsed.summits = await nameSummits(parsed.summits);
+          parsed.peaks = [];
+          if (parsed.hasEle) {
+            setBusy({ label: 'Looking up mountain names…', done, total: files.length });
+            Object.assign(parsed, await lookupPeaks(parsed));
           }
           setTrack(parsed);
           setGpxName(file.name);

@@ -134,7 +134,12 @@ export function createScene({ W, H, track, basemap, terrain, placed, settings, t
     scene.summits = track.summits.map((sm) => {
       const [x, y] = basemap.toScreen(sm.lat, sm.lon);
       const label = sm.name ? `${sm.name} ${fmtMeters(sm.ele)}` : fmtMeters(sm.ele);
-      return { x, y, dist: sm.dist, label };
+      return { x, y, dist: sm.dist, label, sub: sm.nameEn || '' };
+    });
+    // Other named mountains near the trail (highest first, which wins when labels collide).
+    scene.peaks = (track.peaks || []).map((pk) => {
+      const [x, y] = basemap.toScreen(pk.lat, pk.lon);
+      return { x, y, label: pk.name, nameEn: pk.nameEn || '', eleM: pk.ele, ele: fmtMeters(pk.ele) };
     });
     // How the route is placed on screen; the 3D view swaps in projected points.
     scene.flat = { pts: scene.pts, at: basemap.toScreen, pin: (p) => [p.x, p.y] };
@@ -144,7 +149,10 @@ export function createScene({ W, H, track, basemap, terrain, placed, settings, t
       scene.view3d = getTerrainView(basemap, terrain, base);
       if (scene.view3d) {
         scene.ptsH = hs.map((h) => h - base);
-        for (const pin of [...scene.pins, ...scene.summits]) pin.h = terrain.heightAt(pin.x, pin.y) - base;
+        for (const pin of [...scene.pins, ...scene.summits, ...scene.peaks]) pin.h = terrain.heightAt(pin.x, pin.y) - base;
+        // Crowd-sourced elevations are sometimes wrong (Kinabalu's King George Peak is listed
+        // 150 m too high); when the terrain disagrees that much, show just the name.
+        for (const pk of scene.peaks) if (Math.abs(pk.h + base - pk.eleM) > 150) pk.ele = '';
         scene.headingAt = buildHeading(track, basemap, settings.routeSeconds);
       }
     }
@@ -305,7 +313,8 @@ function drawRouteLayer(
   dot(pts[0], '#30a46c');
 
   if (summits && scene.summits) {
-    for (const sm of scene.summits) drawSummit(ctx, scene, sm, view.pin(sm), dist, k);
+    const taken = scene.summits.map((sm) => drawSummit(ctx, scene, sm, view.pin(sm), dist, k));
+    drawPeaks(ctx, scene, view, k, taken);
   }
 
   if (pins && scene.pins) {
@@ -374,12 +383,17 @@ function drawSummit(ctx, scene, sm, [x, y], dist, k) {
   ctx.lineWidth = 4 * s;
   ctx.strokeStyle = '#fff';
   ctx.stroke();
-  // Elevation tag above it.
+  // Name + elevation tag above it (English name on a second line), slid along to stay
+  // inside the frame.
   ctx.font = font(700, 26 * s);
-  const tw = ctx.measureText(sm.label).width;
-  const th = 40 * s;
+  let tw = ctx.measureText(sm.label).width;
+  ctx.font = font(500, 20 * s);
+  if (sm.sub) tw = Math.max(tw, ctx.measureText(sm.sub).width);
+  const th = (sm.sub ? 64 : 40) * s;
   const ty = y - r * 1.5 - 10 * s - th;
-  roundRect(ctx, x - tw / 2 - 14 * s, ty, tw + 28 * s, th, th / 2);
+  const half = tw / 2 + 14 * s;
+  const tx = clamp(x, half + 12 * u, scene.W - half - 12 * u);
+  roundRect(ctx, tx - half, ty, half * 2, th, 20 * s);
   ctx.fillStyle = 'rgba(20,20,24,0.78)';
   ctx.fill();
   ctx.lineWidth = 2.5 * s;
@@ -388,7 +402,70 @@ function drawSummit(ctx, scene, sm, [x, y], dist, k) {
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(sm.label, x, ty + th / 2 + 1 * s);
+  ctx.font = font(700, 26 * s);
+  ctx.fillText(sm.label, tx, ty + 21 * s);
+  if (sm.sub) {
+    ctx.globalAlpha *= 0.85;
+    ctx.font = font(500, 20 * s);
+    ctx.fillText(sm.sub, tx, ty + 46 * s);
+  }
+  ctx.restore();
+  const pad = 6 * s;
+  return { l: Math.min(x - r, tx - half) - pad, r: Math.max(x + r, tx + half) + pad, t: ty - pad, b: y + r * 0.3 + pad };
+}
+
+/**
+ * Nearby named mountains the trail doesn't climb: a small white peak with its name and
+ * elevation, for context. Quieter than a summit flag; a label that would overlap a summit
+ * or a higher peak's label is left out for that frame.
+ */
+function drawPeaks(ctx, scene, view, k, taken) {
+  const { W, H, u, safe, hud } = scene;
+  const s = u * k;
+  const r = 10 * s;
+  const margin = 16 * u;
+  // Keep clear of the title (and the app header over it on a Reel) and the bottom HUD.
+  taken = [...taken, { l: 0, r: W, t: -Infinity, b: safe.top + 150 * u }, { l: 0, r: W, t: H - hud.band, b: Infinity }];
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+  for (const pk of scene.peaks) {
+    const [x, y, w] = view.pin(pk);
+    if (w !== undefined && w <= 0) continue; // behind the 3D camera
+    if (x < r || x > W - r || y < 0 || y > H) continue;
+    // Name, then the English name and elevation in smaller type.
+    const sub = [pk.nameEn, pk.ele].filter(Boolean).join(' · ');
+    ctx.font = font(700, 23 * s);
+    const nw = ctx.measureText(pk.label).width;
+    ctx.font = font(500, 19 * s);
+    const ew = sub ? ctx.measureText(sub).width : 0;
+    const half = Math.max(nw, ew) / 2;
+    // Slide the label along to stay inside the frame; the peak itself stays put.
+    const tx = clamp(x, margin + half, W - margin - half);
+    const top = y - r * 1.5 - (sub ? 52 : 31) * s;
+    const box = { l: Math.min(x - r, tx - half) - 8 * s, r: Math.max(x + r, tx + half) + 8 * s, t: top, b: y + r * 0.3 + 4 * s };
+    if (taken.some((o) => box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t)) continue;
+    taken.push(box);
+
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowBlur = 8 * s;
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 1.5);
+    ctx.lineTo(x + r, y + r * 0.3);
+    ctx.lineTo(x - r, y + r * 0.3);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = font(700, 23 * s);
+    ctx.fillText(pk.label, tx, y - r * 1.5 - (sub ? 28 : 7) * s);
+    if (sub) {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.font = font(500, 19 * s);
+      ctx.fillText(sub, tx, y - r * 1.5 - 7 * s);
+    }
+  }
   ctx.restore();
 }
 
